@@ -1,0 +1,9 @@
+# GoodPrice — dependintele REALE de productie (scrapere + API).
+# Oglindesc venv-ul verificat pe LXC (2026-11-26). requirements.txt e lista
+# larga istorica (celery/ortools/playwright — nefolosite in productie).
+httpx[http2]==0.27.*
+psycopg[binary]==3.2.*
+fastapi==0.115.*
+uvicorn[standard]==0.32.*
+pydantic==2.*
+python-dotenv==1.*

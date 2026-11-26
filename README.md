@@ -74,6 +74,11 @@ Rulează pe un LXC Proxmox, always-on. Mac = editor, container = runtime.
 | Acces | `ssh goodprice` (cheie `~/.ssh/goodprice_lxc`) |
 | Deploy | `./scripts/deploy.sh` (rsync Mac → `/opt/goodprice`) |
 
+**Server nou (cloud)**: `git clone <repo> /opt/goodprice && cd /opt/goodprice &&
+bash scripts/bootstrap-server.sh [--restore dump]` — instalează TOT de la zero
+(pachete, Postgres pe UTF-8, parolă nouă în `.env`, schemă/date, venv, systemd).
+Ghid complet pentru Claude: `CLAUDE.md`.
+
 Setup DB: `ssh goodprice 'cd /opt/goodprice && bash scripts/provision-db.sh'`.
 Notă: Redis în LXC neprivilegiat are nevoie de drop-in-ul care dezactivează
 `PrivateUsers` & co. (vezi `/etc/systemd/system/redis-server.service.d/lxc.conf`).
