@@ -1,0 +1,10 @@
+[Unit]
+Description=GoodPrice - scrape Lidl -> Postgres
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/goodprice
+Environment=PYTHONPATH=/opt/goodprice
+ExecStart=/opt/goodprice/.venv/bin/python /opt/goodprice/scrapers/lidl.py

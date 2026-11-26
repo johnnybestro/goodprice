@@ -1,0 +1,22 @@
+# GoodPrice — dependinte backend/scraping (productie)
+# PoC-ul curent (scrapers/poc/sezamo.py) merge doar pe stdlib; astea sunt pentru pasii urmatori.
+
+# scraping
+httpx[http2]==0.27.*
+curl-cffi==0.7.*          # spoof TLS/JA3 pentru API-uri protejate
+selectolax==0.3.*         # parsare HTML rapida
+playwright==1.48.*        # fallback pentru site-uri grele de JS / paginare XHR
+
+# backend API
+fastapi==0.115.*
+uvicorn[standard]==0.32.*
+pydantic==2.9.*
+
+# date / DB
+psycopg[binary]==3.2.*    # driver Postgres
+sqlalchemy==2.0.*
+redis==5.1.*
+celery==5.4.*             # cozi + scheduler scraping zilnic
+
+# optimizare cos
+ortools==9.11.*           # split pe magazine (ILP/CP-SAT)

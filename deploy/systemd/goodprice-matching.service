@@ -1,0 +1,9 @@
+[Unit]
+Description=GoodPrice - matching produse intre magazine (dupa scraperele zilnice)
+After=network-online.target postgresql.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/goodprice
+Environment=PYTHONPATH=/opt/goodprice
+ExecStart=/opt/goodprice/.venv/bin/python -m goodprice.matching

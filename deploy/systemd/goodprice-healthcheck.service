@@ -1,0 +1,9 @@
+[Unit]
+Description=GoodPrice - healthcheck zilnic (goldens + prospetime date)
+After=goodprice-api.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/goodprice
+Environment=PYTHONPATH=/opt/goodprice
+ExecStart=/opt/goodprice/.venv/bin/python scripts/healthcheck.py

@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="ro">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>GoodPrice</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#1d9e75">
+<link rel="icon" href="/icon.svg">
+<link rel="apple-touch-icon" href="/icon.svg">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="GoodPrice">
+<style>
+  :root{ --bg:#f7f7f5; --card:#fff; --line:#e6e6e1; --ink:#22221f; --mut:#6b6b64; --accent:#1d9e75; --accent-bg:#e1f5ee; }
+  *{ box-sizing:border-box; }
+  body{ margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; background:var(--bg); color:var(--ink); line-height:1.5; }
+  .wrap{ max-width:900px; margin:0 auto; padding:20px 16px calc(60px + env(safe-area-inset-bottom)); }
+  header{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:2px; }
+  .logo{ width:30px; height:30px; border-radius:8px; }
+  h1{ font-size:23px; font-weight:600; margin:0; }
+  .tag{ color:var(--mut); font-size:13.5px; }
+  #install{ margin-left:auto; display:none; background:var(--accent); color:#fff; border:none; border-radius:8px; padding:7px 12px; font-weight:600; cursor:pointer; }
+  .card{ background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px 16px; }
+  .card h2{ font-size:14px; font-weight:600; margin:0 0 10px; color:var(--mut); display:flex; justify-content:space-between; align-items:center; }
+  .hero{ margin-top:16px; }
+  .inrow{ display:flex; gap:8px; }
+  .inrow input{ flex:1; padding:11px 13px; border:1px solid var(--line); border-radius:8px; font-size:16px; outline:none; }
+  .inrow input:focus{ border-color:var(--accent); }
+  .go{ background:var(--accent); color:#fff; border:none; border-radius:8px; padding:10px 18px; font-weight:600; cursor:pointer; font-size:15px; }
+  .go:disabled{ background:#b9d9cd; cursor:not-allowed; }
+  .ghost{ background:none; border:none; color:var(--mut); cursor:pointer; font-size:13px; text-decoration:underline; }
+  .queue{ font-size:12.5px; color:var(--mut); margin-top:6px; }
+  /* configurator */
+  .cfg{ margin-top:14px; border-top:1px solid var(--line); padding-top:12px; }
+  .cfghead{ display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; }
+  .cfgterm{ font-size:17px; font-weight:600; text-transform:capitalize; }
+  .hint{ font-size:12.5px; color:#b45309; background:#fef3c7; border-radius:6px; padding:3px 9px; }
+  .hint.ok{ color:#0f6e56; background:var(--accent-bg); }
+  .facet{ margin-top:10px; }
+  .facet .fl{ font-size:12px; text-transform:uppercase; letter-spacing:.04em; color:var(--mut); margin-bottom:5px; }
+  .chips{ display:flex; gap:6px; flex-wrap:wrap; }
+  .chip{ border:1px solid var(--line); background:#fff; border-radius:18px; padding:5px 13px; cursor:pointer; font-size:13.5px; }
+  .chip:hover{ border-color:var(--accent); }
+  .chip.on{ border-color:var(--accent); background:var(--accent-bg); color:#0f6e56; font-weight:600; }
+  .short{ margin-top:12px; }
+  .vopt{ display:flex; align-items:center; gap:10px; padding:8px 0; border-bottom:1px solid var(--line); font-size:13.5px; cursor:pointer; border-radius:6px; }
+  .vopt:last-child{ border-bottom:none; }
+  .vopt.dis{ opacity:.45; cursor:not-allowed; }
+  .vopt.sel{ background:var(--accent-bg); padding-left:8px; }
+  .vname{ flex:1; min-width:0; }
+  .check{ width:16px; color:var(--accent); flex-shrink:0; font-weight:700; }
+  .attr{ display:inline-block; font-size:11px; background:#ecece7; color:var(--mut); border-radius:5px; padding:1px 6px; margin-left:5px; }
+  .only{ font-size:11.5px; color:var(--mut); font-style:italic; }
+  .cfgfoot{ display:flex; gap:10px; align-items:center; margin-top:12px; }
+  /* lista + rezultat */
+  .grid{ display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-top:16px; }
+  @media(max-width:680px){ .grid{ grid-template-columns:1fr; } }
+  input.small{ width:100%; padding:10px 12px; border:1px solid var(--line); border-radius:8px; font-size:15px; outline:none; }
+  .res{ margin-top:8px; max-height:280px; overflow:auto; }
+  .row{ display:flex; align-items:center; gap:10px; padding:8px 0; border-bottom:1px solid var(--line); font-size:14px; }
+  .row:last-child{ border-bottom:none; }
+  .nm{ flex:1; min-width:0; }
+  .nm .br{ color:var(--mut); font-size:12px; }
+  .term{ display:inline-block; font-size:11px; text-transform:uppercase; letter-spacing:.03em; color:var(--accent); font-weight:600; margin-right:4px; }
+  .prices{ display:flex; gap:5px; flex-shrink:0; align-items:center; }
+  .pp{ font-size:12px; border-radius:6px; padding:2px 7px; background:#f1f1ee; color:var(--mut); white-space:nowrap; }
+  .pp.win{ background:var(--accent-bg); color:#0f6e56; font-weight:600; }
+  .dot{ width:7px; height:7px; border-radius:50%; display:inline-block; margin-right:3px; vertical-align:middle; }
+  .iconbtn{ border:1px solid var(--line); background:#fff; border-radius:6px; padding:3px 8px; cursor:pointer; font-size:13px; flex-shrink:0; }
+  .qty{ display:inline-flex; align-items:center; gap:6px; flex-shrink:0; }
+  .qty button{ width:26px; height:26px; padding:0; border:1px solid var(--line); background:#fff; border-radius:6px; cursor:pointer; }
+  .empty{ color:var(--mut); font-size:13px; padding:10px 0; }
+  .ctrls{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:18px 0 12px; }
+  .seg button{ min-width:38px; border:1px solid var(--line); background:#fff; border-radius:8px; padding:6px 10px; cursor:pointer; }
+  .seg button.on{ border-color:var(--accent); background:var(--accent-bg); color:#0f6e56; font-weight:600; }
+  .result{ background:var(--card); border:2px solid var(--accent); border-radius:12px; padding:16px; }
+  .total{ font-size:30px; font-weight:600; }
+  .save{ display:inline-block; background:var(--accent-bg); color:#0f6e56; font-size:13px; padding:4px 10px; border-radius:8px; margin-top:4px; }
+  .chipS{ display:inline-flex; align-items:center; gap:6px; background:#f1f1ee; border-radius:20px; padding:3px 11px; font-size:13px; margin:8px 6px 0 0; }
+  .stotals{ display:flex; gap:10px; flex-wrap:wrap; margin-top:12px; }
+  .st{ background:#f1f1ee; border-radius:8px; padding:8px 12px; font-size:13px; }
+  .st.best{ background:var(--accent-bg); color:#0f6e56; }
+  .st b{ font-size:16px; font-weight:600; display:block; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <img class="logo" src="/icon.svg" alt="">
+    <h1>GoodPrice</h1>
+    <span class="tag">date reale: Sezamo · Freshful · Mega Image · Carrefour · Lidl</span>
+    <button id="install">Instalează</button>
+  </header>
+
+  <div class="hero card">
+    <h2>Construiește-ți lista</h2>
+    <div class="inrow">
+      <input id="term" placeholder="scrie un produs (ex: apa) și apasă Enter" autocomplete="off">
+      <button class="go" id="startCfg">Caută</button>
+    </div>
+    <div class="queue" id="queue"></div>
+    <div id="cfg"></div>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Sau caută un produs exact</h2>
+      <input class="small" id="q" type="text" placeholder="ex: zuzu 1.5%…" autocomplete="off">
+      <div class="res" id="res"><div class="empty">Opțional.</div></div>
+    </div>
+    <div class="card">
+      <h2>Lista mea (<span id="cnt">0</span>) <button class="ghost" id="clear" style="display:none">golește</button></h2>
+      <div id="list"><div class="empty">Scrie un produs sus și configurează-l.</div></div>
+    </div>
+  </div>
+
+  <div class="ctrls">
+    <span class="tag">Accept cumpărături din</span>
+    <span class="seg" id="seg"></span>
+    <span class="tag">magazin(e)</span>
+    <button class="go" id="goBtn">Optimizează coșul</button>
+  </div>
+  <div id="out"></div>
+</div>
+
+<script>
+const DOTS = {sezamo:"#7F77DD", freshful:"#E24B4A", lidl:"#1D9E75", "mega-image":"#EF9F27", carrefour:"#378ADD"};
+const LS = "goodprice_lines_v3";
+const FACETS = [["amount","Cantitate"],["percent","Grăsime / concentrație"],["fel","Tip"],["ambalaj","Ambalaj"]];
+let lines = [];      // {id, term, product:{kind,canonical_id,sp_id,name,brand,weighted,prices,unit_prices,attrs}, qty}
+let seq = 1;
+let queue = [];      // termeni de configurat, pe rand
+let cfg = null;      // {term, products, sel:{}, picked}
+let maxStores = 2;
+let names = {};
+
+const lei = x => x.toFixed(2).replace(".",",")+" lei";
+const el = h => { const d=document.createElement("div"); d.innerHTML=h; return d.firstElementChild; };
+const save = () => localStorage.setItem(LS, JSON.stringify({lines, seq}));
+try { const s=JSON.parse(localStorage.getItem(LS)); if(s){ lines=s.lines||[]; seq=s.seq||1; } } catch(e){}
+
+if("serviceWorker" in navigator){
+  const had = !!navigator.serviceWorker.controller;
+  let ref=false;
+  navigator.serviceWorker.addEventListener("controllerchange",()=>{ if(!ref){ ref=true; if(had) location.reload(); } });
+  navigator.serviceWorker.register("/sw.js").catch(()=>{});
+}
+let deferredPrompt=null;
+window.addEventListener("beforeinstallprompt",(e)=>{ e.preventDefault(); deferredPrompt=e; document.getElementById("install").style.display="inline-block"; });
+document.getElementById("install").onclick=async()=>{ if(!deferredPrompt)return; deferredPrompt.prompt(); await deferredPrompt.userChoice; deferredPrompt=null; };
+
+fetch("/api/stores").then(r=>r.json()).then(d=>names=d);
+const nm = s => names[s]||s;
+
+const seg = document.getElementById("seg");
+[1,2,3].forEach(k=>{
+  const b=document.createElement("button"); b.textContent=k; if(k===2)b.className="on";
+  b.onclick=()=>{ maxStores=k; [...seg.children].forEach(c=>c.className=""); b.className="on"; };
+  seg.appendChild(b);
+});
+
+function pmap(p){ return (p.weighted && Object.keys(p.unit_prices||{}).length ? p.unit_prices : p.prices); }
+function psuf(p){ return (p.weighted && Object.keys(p.unit_prices||{}).length ? "/kg" : ""); }
+function priceTags(p){
+  const m=pmap(p), suf=psuf(p), ks=Object.keys(m);
+  const min=Math.min(...Object.values(m));
+  let h=ks.sort((a,b)=>m[a]-m[b]).map(s=>'<span class="pp'+(m[s]===min&&ks.length>1?' win':'')+'"><span class="dot" style="background:'+(DOTS[s]||"#999")+'"></span>'+lei(m[s])+suf+'</span>').join("");
+  if(ks.length===1) h+=' <span class="only">doar '+nm(ks[0])+'</span>';
+  return h;
+}
+
+/* ===== configurator ===== */
+const termIn = document.getElementById("term");
+function enqueue(){
+  const raw=termIn.value.trim(); if(!raw) return;
+  queue.push(...raw.split(/[\n,]+/).map(t=>t.trim()).filter(Boolean));
+  termIn.value="";
+  if(!cfg) nextCfg(); else renderQueue();
+}
+termIn.addEventListener("keydown",e=>{ if(e.key==="Enter") enqueue(); });
+document.getElementById("startCfg").onclick=enqueue;
+
+function renderQueue(){
+  document.getElementById("queue").textContent = queue.length ? "urmează: "+queue.join(", ") : "";
+}
+function nextCfg(){
+  renderQueue();
+  if(!queue.length){ cfg=null; renderCfg(); return; }
+  const term=queue.shift(); renderQueue();
+  document.getElementById("cfg").innerHTML='<div class="empty">caut variante pentru „'+term+'"…</div>';
+  fetch("/api/configure?q="+encodeURIComponent(term)).then(r=>r.json()).then(d=>{
+    if(!d.products.length){ document.getElementById("cfg").innerHTML='<div class="empty">„'+term+'": nimic găsit.</div>'; setTimeout(nextCfg,900); return; }
+    cfg={term, products:d.products, sel:{}, picked:null};
+    renderCfg();
+  });
+}
+function filtered(){
+  return cfg.products.filter(p=>FACETS.every(([k])=>!cfg.sel[k] || p.attrs[k]===cfg.sel[k]));
+}
+function renderCfg(){
+  const box=document.getElementById("cfg");
+  if(!cfg){ box.innerHTML=""; return; }
+  const fl=filtered();
+  // fatetele active: >=2 valori distincte printre candidatii ramasi (sau selectate deja)
+  let facetHtml="", missing=[];
+  for(const [key,label] of FACETS){
+    const vals=[...new Set(fl.map(p=>p.attrs[key]).filter(Boolean))];
+    const selected=cfg.sel[key];
+    if(!selected && vals.length<2) continue;
+    if(!selected) missing.push(label.toLowerCase());
+    const opts=(selected?[...new Set(cfg.products.map(p=>p.attrs[key]).filter(Boolean))]:vals)
+      .sort((a,b)=>String(a).localeCompare(String(b),undefined,{numeric:true}));
+    facetHtml+='<div class="facet"><div class="fl">'+label+'</div><div class="chips">'
+      +opts.map(v=>'<button class="chip'+(selected===v?' on':'')+'" data-k="'+key+'" data-v="'+String(v).replace(/"/g,'&quot;')+'">'+v+'</button>').join("")
+      +'</div></div>';
+  }
+  const ready = missing.length===0;
+  const hint = ready
+    ? '<span class="hint ok">alege produsul din listă ↓</span>'
+    : '<span class="hint">alege întâi: '+missing.join(" · ")+'</span>';
+  const shortlist = fl.slice(0,12).map((p,i)=>{
+    const tags=FACETS.map(([k])=>p.attrs[k]).filter(Boolean).map(a=>'<span class="attr">'+a+'</span>').join("");
+    const selc = cfg.picked===p;
+    return '<div class="vopt'+(ready?'':' dis')+(selc?' sel':'')+'" data-i="'+cfg.products.indexOf(p)+'">'
+      +'<span class="check">'+(selc?'✓':'')+'</span>'
+      +'<span class="vname">'+p.name+(p.brand?' <span class="br">· '+p.brand+'</span>':'')+tags+'</span>'
+      +'<div class="prices">'+priceTags(p)+'</div></div>';
+  }).join("");
+  box.innerHTML='<div class="cfg"><div class="cfghead"><span class="cfgterm">'+cfg.term+'</span>'
+    +'<span class="tag">'+fl.length+' variante</span>'+hint+'</div>'
+    +facetHtml
+    +'<div class="short">'+ (shortlist||'<div class="empty">nicio variantă cu aceste proprietăți — schimbă selecția.</div>') +'</div>'
+    +'<div class="cfgfoot"><button class="go" id="addBtn"'+(cfg.picked?'':' disabled')+'>Adaugă în listă</button>'
+    +'<button class="ghost" id="skipBtn">renunță la „'+cfg.term+'"</button></div></div>';
+
+  box.querySelectorAll(".chip").forEach(c=>{
+    c.onclick=()=>{ const k=c.dataset.k;
+      cfg.sel[k] = (cfg.sel[k]===c.dataset.v) ? null : c.dataset.v;
+      cfg.picked=null; renderCfg(); };
+  });
+  if(ready) box.querySelectorAll(".vopt").forEach(v=>{
+    v.onclick=()=>{ cfg.picked=cfg.products[+v.dataset.i]; renderCfg(); };
+  });
+  const add=box.querySelector("#addBtn");
+  if(add) add.onclick=()=>{ if(!cfg.picked) return;
+    lines.push({id:seq++, term:cfg.term, product:cfg.picked, qty:1});
+    save(); renderList(); nextCfg(); termIn.focus(); };
+  box.querySelector("#skipBtn").onclick=()=>nextCfg();
+}
+
+/* ===== cautare exacta (optional) ===== */
+const q=document.getElementById("q");
+let t=null;
+q.addEventListener("input", ()=>{ clearTimeout(t); t=setTimeout(()=>{
+  const v=q.value.trim(); const res=document.getElementById("res");
+  if(v.length<2){ res.innerHTML='<div class="empty">Opțional.</div>'; return; }
+  fetch("/api/configure?q="+encodeURIComponent(v)+"&limit=10").then(r=>r.json()).then(d=>{
+    if(!d.products.length){ res.innerHTML='<div class="empty">Nimic găsit.</div>'; return; }
+    res.innerHTML="";
+    d.products.forEach(p=>{
+      const row=el('<div class="row"><div class="nm">'+p.name+(p.brand?' <span class="br">· '+p.brand+'</span>':'')+'</div><div class="prices">'+priceTags(p)+'</div><button class="iconbtn">+</button></div>');
+      row.querySelector("button").onclick=()=>{ lines.push({id:seq++, term:null, product:p, qty:1}); save(); renderList(); };
+      res.appendChild(row);
+    });
+  });
+},220); });
+
+/* ===== lista ===== */
+function renderList(){
+  const list=document.getElementById("list");
+  document.getElementById("cnt").textContent=lines.length;
+  document.getElementById("clear").style.display=lines.length?"inline":"none";
+  if(!lines.length){ list.innerHTML='<div class="empty">Scrie un produs sus și configurează-l.</div>'; return; }
+  list.innerHTML="";
+  lines.forEach(ln=>{
+    const p=ln.product;
+    const termLbl = ln.term ? '<span class="term">'+ln.term+'</span>' : '';
+    const row=el('<div class="row"><div class="nm">'+termLbl+p.name+(p.brand?' <span class="br">· '+p.brand+'</span>':'')
+      +'</div><div class="prices">'+priceTags(p)+'</div>'
+      +'<span class="qty"><button>−</button><span>'+ln.qty+'</span><button>+</button></span>'
+      +'<button class="iconbtn">×</button></div>');
+    const b=row.querySelectorAll("button");
+    b[0].onclick=()=>{ ln.qty--; if(ln.qty<=0) lines=lines.filter(x=>x!==ln); save(); renderList(); };
+    b[1].onclick=()=>{ ln.qty++; save(); renderList(); };
+    b[2].onclick=()=>{ lines=lines.filter(x=>x!==ln); save(); renderList(); };
+    list.appendChild(row);
+  });
+}
+document.getElementById("clear").onclick=()=>{ lines=[]; save(); renderList(); document.getElementById("out").innerHTML=""; };
+
+/* ===== optimizare ===== */
+document.getElementById("goBtn").onclick=()=>{
+  const out=document.getElementById("out");
+  if(!lines.length){ out.innerHTML='<div class="empty">Lista e goală.</div>'; return; }
+  out.innerHTML='<div class="empty">Calculez…</div>';
+  const items=lines.map(ln=>{
+    const p=ln.product;
+    return p.canonical_id ? {canonical_id:p.canonical_id, qty:ln.qty} : {sp_id:p.sp_id, qty:ln.qty};
+  });
+  fetch("/api/optimize",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({items, max_stores:maxStores})})
+    .then(r=>r.json()).then(render).catch(()=>{ out.innerHTML='<div class="empty">Eroare la calcul.</div>'; });
+};
+function render(d){
+  const out=document.getElementById("out");
+  if(!d.plan){ out.innerHTML='<div class="empty">Nu pot acoperi lista cu '+maxStores+' magazin(e) — unele produse sunt doar într-un magazin. Încearcă 2-3 magazine.</div>'; return; }
+  const chips=d.plan.stores.map(s=>'<span class="chipS"><span class="dot" style="background:'+(DOTS[s]||"#999")+'"></span>'+nm(s)+'</span>').join("");
+  const brk=d.plan.assign.map(a=>'<div class="row"><span class="dot" style="background:'+(DOTS[a.store]||"#999")+'"></span><span class="nm">'+a.item+(a.qty>1?' ×'+a.qty:'')+'</span><span class="br">'+nm(a.store)+'</span><span>'+lei(a.price*a.qty)+'</span></div>').join("");
+  const best=d.single_store_totals[0];
+  const singles=d.single_store_totals.map(s=>'<div class="st'+(s===best?' best':'')+'">'+nm(s.store)+'<b>'+lei(s.total)+'</b></div>').join("");
+  const head = maxStores===1 ? "Cel mai ieftin într-un singur magazin" : "Split inteligent · maxim "+maxStores+" magazine";
+  const sv = d.savings_vs_best_single>0.005 ? '<div class="save">economisești '+lei(d.savings_vs_best_single)+' față de cel mai bun magazin unic</div>' : '';
+  const note = d.single_store_totals.length ? '' : '<div class="empty">niciun magazin nu are singur toată lista — split necesar</div>';
+  out.innerHTML='<div class="result"><div class="tag">'+head+'</div><div class="total">'+lei(d.plan.total)+'</div>'+sv
+    +'<div>'+chips+'</div><div class="tag" style="margin-top:12px">cum se împarte lista</div>'+brk
+    +note
+    +(singles?'<div class="tag" style="margin-top:14px">total pe fiecare magazin (întreagă)</div><div class="stotals">'+singles+'</div>':'')
+    +'</div>';
+}
+
+renderList();
+</script>
+</body>
+</html>

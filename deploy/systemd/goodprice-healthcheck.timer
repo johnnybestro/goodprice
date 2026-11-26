@@ -1,0 +1,9 @@
+[Unit]
+Description=GoodPrice - healthcheck zilnic dupa matching
+
+[Timer]
+OnCalendar=*-*-* 06:30:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

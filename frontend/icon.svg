@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="112" fill="#1d9e75"/>
+  <path d="M300 96 L416 96 L416 212 L236 392 L120 276 Z" fill="none" stroke="#ffffff" stroke-width="34" stroke-linejoin="round"/>
+  <circle cx="356" cy="156" r="26" fill="#ffffff"/>
+  <text x="168" y="250" font-family="-apple-system,Segoe UI,Roboto,sans-serif" font-size="150" font-weight="700" fill="#ffffff" text-anchor="middle" transform="rotate(45 168 250)">lei</text>
+</svg>

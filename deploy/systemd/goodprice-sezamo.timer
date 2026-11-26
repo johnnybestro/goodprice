@@ -1,0 +1,10 @@
+[Unit]
+Description=GoodPrice - ruleaza scraper-ul Sezamo zilnic
+
+[Timer]
+OnCalendar=*-*-* 04:00:00
+Persistent=true
+RandomizedDelaySec=900
+
+[Install]
+WantedBy=timers.target
