@@ -12,13 +12,14 @@ Exit != 0 la orice esec => vizibil in journal + systemd status failed.
 import sys
 import urllib.request
 import json
+import os
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from goodprice import db                  # noqa: E402
 from goodprice.matching import _s         # noqa: E402
 
-API = "http://localhost:8000"
+API = os.environ.get("GOODPRICE_API_URL", "http://localhost:8000")
 
 # (termen, fragment care TREBUIE sa apara in numele unui rezultat, magazin asteptat sau None)
 GOLDENS = [
