@@ -107,7 +107,9 @@ PRODUCE_STOP = {"minim", "maxim", "aprox", "cca", "circa", "eco", "bio", "punga"
                 "plasa", "calibru", "categoria", "clasa", "ambalat", "ambalate",
                 "vrac", "romania", "import", "proaspat", "proaspata", "proaspete",
                 "proaspeti", "feliat", "feliata", "curatat", "curatata", "spalat",
-                "spalate", "categorie", "soi", "buc", "bucata", "bucati", "gr"}
+                "spalate", "categorie", "soi", "buc", "bucata", "bucati", "gr",
+                # texte de flyer Kaufland ("a nu se consuma coaja", "Nerec.consumul cojii")
+                "consuma", "consumul", "coaja", "cojii", "nerec"}
 
 
 def produce_core(name: str) -> list[str]:
@@ -184,7 +186,7 @@ def match_unbranded(a_list, b_list):
     return matches
 
 
-STORES = ["sezamo", "freshful", "mega-image", "carrefour", "lidl"]   # ordinea = prioritatea la grupare
+STORES = ["sezamo", "freshful", "mega-image", "carrefour", "lidl", "kaufland"]   # ordinea = prioritatea la grupare
 
 
 def run(persist=True):

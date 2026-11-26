@@ -1,0 +1,10 @@
+[Unit]
+Description=GoodPrice - ruleaza scraper-ul Kaufland zilnic
+
+[Timer]
+OnCalendar=*-*-* 05:45:00
+Persistent=true
+RandomizedDelaySec=600
+
+[Install]
+WantedBy=timers.target

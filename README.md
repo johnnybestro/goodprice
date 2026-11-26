@@ -20,9 +20,20 @@ opțiunea de **split pe 2-3 magazine** când e profitabil.
 
 Live: **Sezamo** (~14.3k), **Freshful** (~18k), **Mega Image** (~7.7k, GraphQL),
 **Carrefour** (~87k URL-uri produs, Magento SSR — include nonfood; timer 21:30, ~7h),
-**Lidl** (~1.1k văzute, vitrina de promoții — prețuri de magazin fizic).
+**Lidl** (~1.1k văzute, vitrina de promoții — prețuri de magazin fizic),
+**Kaufland** (~340 oferte săptămânale — n-are shop online, doar flyerul).
 Urmează: Auchan, Penny; Monitorul Prețurilor pt. lanțurile fără online.
-(Kaufland.ro nu are shop online.)
+
+### Kaufland (`scrapers/kaufland.py`)
+Doar ofertele săptămânale (flyerul): un singur GET pe
+`/oferte/oferte-saptamanale/saptamana-curenta.html`, datele sunt embed-ate SSR în
+`window.SSR` (componenta `OfferTemplate`): titlu (≈brand), subtitlu (+gramaj), preț
+nou/vechi, % reducere, preț/unitate `"(=1 kg 11.99)"`, valabilitate, categorie.
+**Singurul magazin cu EAN-uri** (~150/zi, din numele imaginii `4002420747912_RO_P`;
+imaginile numite după klNr = fără EAN real — filtrate). Ofertele expirate/viitoare
+sunt sărite; legume/fructe intră fără brand (matching la cântar pe lei/kg). Timer
+05:45. Există și oferte per magazin (`/.klstorefinder.json` — 209 magazine +
+`/.kloffers.storeName=RO1000.json`) — nefolosite, luăm vitrina națională.
 
 ### Carrefour (`scrapers/carrefour.py`)
 Magento + React. Cloudflare păzește /graphql (403, legat de TLS fingerprint), dar
