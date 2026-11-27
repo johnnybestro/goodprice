@@ -225,6 +225,62 @@ def match_unbranded(a_list, b_list):
     return matches
 
 
+def assign_ids(groups: list[dict], old_cid: dict[int, int]) -> list[int | None]:
+    """id-uri stabile: fiecare grup nou primeste id-ul canonical vechi cu care are cele mai multe
+    produse in comun; un id vechi merge la un singur grup (cel cu suprapunerea cea mai mare).
+    None = grup nou. old_cid: store_product.id -> canonical_product_id de la rularea trecuta."""
+    from collections import Counter
+    cands = []                                   # (suprapunere, -id, index grup, id)
+    for gi, g in enumerate(groups):
+        counts = Counter(old_cid[p["id"]] for p in g["members"].values() if p["id"] in old_cid)
+        for cid, k in counts.items():
+            cands.append((k, -cid, gi, cid))
+    cands.sort(reverse=True)                     # suprapunere mare intai; la egalitate id-ul mai mic
+    out: list[int | None] = [None] * len(groups)
+    used: set[int] = set()
+    for _k, _neg, gi, cid in cands:
+        if out[gi] is None and cid not in used:
+            out[gi] = cid
+            used.add(cid)
+    return out
+
+
+def persist_groups(con, groups: list[dict]) -> tuple[int, int, int]:
+    """Scrie grupurile pastrand canonical_product.id intre rulari (aplicatia poate tine id-uri,
+    ex. favorite). Inainte (2026-11) fiecare rulare stergea tot si dadea id-uri noi."""
+    old_cid = dict(con.execute(
+        "SELECT id, canonical_product_id FROM store_product WHERE canonical_product_id IS NOT NULL"
+    ).fetchall())
+    ids = assign_ids(groups, old_cid)
+    con.rollback()
+    with con.transaction():
+        con.execute("UPDATE store_product SET canonical_product_id = NULL "
+                    "WHERE canonical_product_id IS NOT NULL")
+        kept = new = 0
+        for g, cid in zip(groups, ids):
+            # reprezentativ: produsul din magazinul cu prioritatea cea mai mare
+            rep = next(g["members"][s] for s in STORES if s in g["members"])
+            vals = (rep["name"], rep["brand"], rep["unit"], g["weighted"])
+            if cid is None:
+                cid = con.execute(
+                    """INSERT INTO canonical_product (name, brand, base_unit, weighted)
+                       VALUES (%s,%s,%s,%s) RETURNING id""", vals).fetchone()[0]
+                new += 1
+            else:
+                # embedding-ul se reface doar daca s-a schimbat numele
+                con.execute(
+                    """UPDATE canonical_product SET name=%s, brand=%s, base_unit=%s, weighted=%s,
+                              embedding = CASE WHEN name = %s THEN embedding END
+                       WHERE id=%s""", (*vals, rep["name"], cid))
+                kept += 1
+            con.execute("UPDATE store_product SET canonical_product_id=%s WHERE id = ANY(%s)",
+                        (cid, [p["id"] for p in g["members"].values()]))
+        gone = con.execute(
+            """DELETE FROM canonical_product c WHERE NOT EXISTS
+               (SELECT 1 FROM store_product sp WHERE sp.canonical_product_id = c.id)""").rowcount
+    return kept, new, gone
+
+
 STORES = ["sezamo", "freshful", "mega-image", "carrefour", "lidl", "kaufland"]   # ordinea = prioritatea la grupare
 
 
@@ -285,24 +341,9 @@ def run(persist=True):
 
     if persist:
         con.rollback()  # inchide tranzactia implicita deschisa de SELECT-uri
-        # rebuild complet: matcher-ul e un job batch idempotent
-        con.execute("UPDATE store_product SET canonical_product_id = NULL "
-                    "WHERE canonical_product_id IS NOT NULL")
-        con.execute("DELETE FROM canonical_product")
-        n = 0
-        for g in groups:
-            # reprezentativ: produsul din magazinul cu prioritatea cea mai mare
-            rep = next(g["members"][s] for s in STORES if s in g["members"])
-            cid = con.execute(
-                """INSERT INTO canonical_product (name, brand, base_unit, weighted)
-                   VALUES (%s,%s,%s,%s) RETURNING id""",
-                (rep["name"], rep["brand"], rep["unit"], g["weighted"]),
-            ).fetchone()[0]
-            ids = [p["id"] for p in g["members"].values()]
-            con.execute("UPDATE store_product SET canonical_product_id=%s WHERE id = ANY(%s)",
-                        (cid, ids))
-            n += 1
-        con.commit()
+        n_kept, n_new, n_gone = persist_groups(con, groups)
+        n = n_kept + n_new
+        print(f"\nid-uri: {n_kept} pastrate, {n_new} noi, {n_gone} grupuri disparute (sterse)")
         print(f"\nPersistat: {n} canonical_product + legaturi.")
     con.close()
     return groups
