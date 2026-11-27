@@ -96,6 +96,28 @@ def check_staples():
                                 f"{chosen['basis']} (asteptat {lo}-{hi}): {chosen['picked'].get(store)}")
 
 
+def check_unit_prices():
+    """GOLDEN 2026-11-27: Mega Image "Oua cu Omega 3 cod 2, 8 bucati" 17.39 lei aparea 17.39 lei/buc
+    (price_per_unit = pretul pachetului). La pachete de N buc: unit_price * N ~= pret."""
+    try:
+        with urllib.request.urlopen(f"{API}/api/configure?q=oua", timeout=30) as r:
+            prods = json.load(r)["products"]
+    except Exception as e:
+        failures.append(f"configure(oua): {e}")
+        return
+    for p in prods:
+        amount = (p.get("attrs") or {}).get("amount") or ""
+        parts = amount.split()
+        if len(parts) != 2 or parts[1] != "buc" or not parts[0].isdigit() or int(parts[0]) < 2:
+            continue
+        n = int(parts[0])
+        for store, price in p["prices"].items():
+            up = p["unit_prices"].get(store)
+            if up is not None and abs(up * n - price) > max(0.05 * price, 0.1):
+                failures.append(f"PRET UNITAR GRESIT: {store} '{p['name']}' {price} lei / {n} buc "
+                                f"dar unit_price {up} lei/buc")
+
+
 def check_freshness():
     con = db.connect()
     try:
@@ -119,10 +141,11 @@ if __name__ == "__main__":
     check_api()
     check_goldens()
     check_staples()
+    check_unit_prices()
     check_freshness()
     if failures:
         print("HEALTHCHECK ESUAT:")
         for f in failures:
             print("  -", f)
         sys.exit(1)
-    print("healthcheck OK — goldens + staple-uri + prospetime + API")
+    print("healthcheck OK — goldens + staple-uri + pret unitar + prospetime + API")
