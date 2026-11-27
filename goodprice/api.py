@@ -42,6 +42,20 @@ def stores():
     return store_names()
 
 
+def _unit_price(price, ppu, unit, raw_amount, name):
+    """Pretul pe unitate afisat (lei/kg, lei/l, lei/buc).
+
+    La unit='buc' magazinele nu trimit acelasi lucru in price_per_unit: Freshful si Sezamo dau
+    pretul pe bucata, Mega Image pretul PE PACHET ("Oua cu Omega 3 cod 2, 8 bucati" 17.39 ->
+    17.39 lei/buc in loc de 2.17), Kaufland uneori 1.00. Cand numele/cantitatea spune cate
+    bucati are pachetul, calculam din pret; altfel ramane valoarea magazinului."""
+    if unit and _s(unit).lower() == "buc" and price is not None:
+        amt = amount_in_base(_s(raw_amount) if raw_amount else None) or amount_in_base(_s(name))
+        if amt and amt[1] == "buc" and amt[0] > 0:
+            return round(float(price) / amt[0], 2)
+    return float(ppu) if ppu is not None else None
+
+
 def _search_products(con, q: str, limit: int) -> list[dict]:
     """Produse canonice (in ambele magazine) pt. un termen, ordonate pe relevanta."""
     q = (q or "").strip()
@@ -49,7 +63,7 @@ def _search_products(con, q: str, limit: int) -> list[dict]:
         return []
     rows = con.execute(
         """SELECT c.id, c.name, c.brand, s.slug, cp.price, cp.price_per_unit, sp.unit,
-                  c.weighted,
+                  c.weighted, sp.name AS sp_name, sp.raw_amount,
                   CASE
                     WHEN c.name ILIKE %(w)s OR c.name ILIKE %(p)s THEN 0
                     WHEN c.name ILIKE %(mid)s OR c.name ILIKE %(end)s THEN 1
@@ -69,14 +83,15 @@ def _search_products(con, q: str, limit: int) -> list[dict]:
     ).fetchall()
 
     by_id: dict = {}
-    for cid, name, brand, slug, price, ppu, unit, weighted, *_ in rows:
+    for cid, name, brand, slug, price, ppu, unit, weighted, sp_name, raw, *_ in rows:
         it = by_id.setdefault(cid, {"canonical_id": cid, "name": _s(name),
                                     "brand": _s(brand), "unit": _s(unit),
                                     "weighted": bool(weighted),
                                     "prices": {}, "unit_prices": {}})
         it["prices"][_s(slug)] = float(price)
-        if ppu is not None:
-            it["unit_prices"][_s(slug)] = float(ppu)
+        up = _unit_price(price, ppu, unit, raw, sp_name)
+        if up is not None:
+            it["unit_prices"][_s(slug)] = up
     results = []
     for it in by_id.values():
         key = "unit_prices" if it["weighted"] else "prices"
@@ -156,7 +171,7 @@ def _prod_attrs(name: str, raw: str | None) -> dict:
 
 _CFG_SQL = """
     SELECT sp.id, sp.name, sp.brand, sp.raw_amount, sp.canonical_product_id,
-           s.slug, cp.price, cp.price_per_unit, COALESCE(c.weighted, false),
+           s.slug, cp.price, cp.price_per_unit, COALESCE(c.weighted, false), sp.unit,
            position(%(qn)s in sp.name_norm) AS pos, length(sp.name_norm) AS len
     FROM store_product sp
     JOIN store s ON s.id = sp.store_id
@@ -197,7 +212,7 @@ def configure(q: str = Query(..., max_length=MAX_Q)):
 
     ents: dict = {}
     order: list = []
-    for sid, name, brand, raw, cid, slug, price, ppu, weighted, _pos, _len in rows:
+    for sid, name, brand, raw, cid, slug, price, ppu, weighted, unit, _pos, _len in rows:
         key = ("c", cid) if cid else ("s", sid)
         e = ents.get(key)
         if not e:
@@ -210,8 +225,9 @@ def configure(q: str = Query(..., max_length=MAX_Q)):
             ents[key] = e
             order.append(key)
         e["prices"][_s(slug)] = float(price)
-        if ppu is not None:
-            e["unit_prices"][_s(slug)] = float(ppu)
+        up = _unit_price(price, ppu, unit, raw, name)
+        if up is not None:
+            e["unit_prices"][_s(slug)] = up
     return {"term": q, "products": [ents[k] for k in order]}
 
 
