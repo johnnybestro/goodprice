@@ -8,9 +8,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Query
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 import re
 import time
@@ -85,8 +85,16 @@ def _search_products(con, q: str, limit: int) -> list[dict]:
     return results[:limit]
 
 
+# Limite de intrare (API public, apelat din aplicatia mobila): o cerere nu poate cere tot
+# catalogul. Peste limite FastAPI raspunde 422 cu detaliul campului.
+MAX_Q = 100          # caractere intr-un termen
+MAX_SEARCH = 50      # rezultate /api/search
+MAX_TERMS = 50       # termeni /api/resolve
+MAX_ITEMS = 100      # articole /api/optimize
+
+
 @app.get("/api/search")
-def search(q: str, limit: int = 20):
+def search(q: str = Query(..., max_length=MAX_Q), limit: int = Query(20, ge=1, le=MAX_SEARCH)):
     con = db.connect()
     try:
         return {"results": _search_products(con, q, limit)}
@@ -161,7 +169,7 @@ _CFG_SQL = """
 
 
 @app.get("/api/configure")
-def configure(q: str):
+def configure(q: str = Query(..., max_length=MAX_Q)):
     """Toate variantele unui termen, cautate DIRECT in Postgres pe name_norm
     (lowercase/fara diacritice, intretinuta de scrapere) cu word-boundary \\y.
     Fara fetch-all + filtrare in Python => fara limita arbitrara care trunchia
@@ -208,7 +216,7 @@ def configure(q: str):
 
 
 class ResolveRequest(BaseModel):
-    terms: list[str]
+    terms: list[str] = Field(..., max_length=MAX_TERMS)
 
 
 @app.post("/api/resolve")
@@ -223,7 +231,7 @@ def resolve(req: ResolveRequest):
         out = []
         all_rows = None  # incarcat lazy, refolosit intre termeni
         for term in req.terms:
-            term = term.strip()
+            term = term.strip()[:MAX_Q]
             if not term:
                 continue
             # 1) staple ("oua", "lapte"...): cel mai ieftin echivalent per magazin,
@@ -252,12 +260,12 @@ class OptItem(BaseModel):
     canonical_id: int | None = None   # produs potrivit intre magazine (2 preturi)
     sp_id: int | None = None          # SAU SKU dintr-un singur magazin (1 pret)
     staple: str | None = None         # SAU echivalent generic ("oua", "lapte"...)
-    qty: int = 1
+    qty: int = Field(1, ge=1, le=99)
 
 
 class OptRequest(BaseModel):
-    items: list[OptItem]
-    max_stores: int = 2
+    items: list[OptItem] = Field(..., max_length=MAX_ITEMS)
+    max_stores: int = Field(2, ge=1, le=10)
 
 
 @app.post("/api/optimize")

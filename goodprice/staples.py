@@ -28,6 +28,7 @@ pattern-urile de mai jos sunt scrise ASCII, fara diacritice.
 from __future__ import annotations
 
 import re
+import time
 from dataclasses import dataclass, field
 
 from .matching import _s, amount_in_base, strip_diacritics
@@ -112,20 +113,40 @@ def _unit_price(price, ppu, unit, raw_amount, name, basis_unit):
             return float(ppu) / 1000
         if basis_unit == "ml" and u == "l":
             return float(ppu) / 1000
-        if basis_unit == "buc" and u == "buc":
-            return float(ppu)
-    # 2) parseaza cantitatea din raw_amount/nume
-    if price is None:
-        return None
-    amt = amount_in_base(raw_amount) or amount_in_base(name)
+    # 2) parseaza cantitatea din raw_amount/nume. La bucati are prioritate fata de price_per_unit:
+    #    magazinele nu dau acelasi lucru pe unit='buc' — Freshful da pretul pe bucata, Mega Image
+    #    pretul PE PACHET ("Oua ..., 6 bucati" 9.99 lei, price_per_unit 9.99), care inmultit cu 10
+    #    dadea 99.90 lei / 10 oua.
+    amt = (amount_in_base(raw_amount) or amount_in_base(name)) if price is not None else None
     if amt and amt[1] == basis_unit and amt[0] > 0:
         return float(price) / amt[0]
+    # 3) bucati fara numar in nume: pretul magazinului pe bucata, doar cand e clar pe bucata
+    #    (mai mic decat pretul pachetului); altfel nu stim cate bucati sunt => nu comparam.
+    if basis_unit == "buc" and ppu is not None and unit and _s(unit).lower() == "buc":
+        if price is None or float(ppu) < float(price):
+            return float(ppu)
     return None
 
 
+# Cache in proces: preturile se schimba o data pe zi (scrapere + matching dimineata), iar
+# incarcarea catalogului (~40k randuri) + filtrarea dura ~1s la FIECARE /api/resolve si
+# /api/optimize cu staple-uri. Dupa CACHE_TTL secunde datele se reincarca.
+CACHE_TTL = 300
+_ROWS_CACHE: dict = {"rows": None, "t": 0.0}
+_RESOLVED_CACHE: dict = {}   # cheie staple -> (timp, rezultat)
+
+
 def _fetch_all(con) -> list[tuple]:
-    """Toate produsele cu pret curent. Filtrarea se face in Python (Unicode corect),
-    fiindca regexul Postgres nu duce diacriticele pe baza SQL_ASCII."""
+    """Toate produsele cu pret curent (cache CACHE_TTL). Filtrarea se face in Python
+    (Unicode corect), fiindca regexul Postgres nu duce diacriticele pe baza SQL_ASCII."""
+    now = time.time()
+    if _ROWS_CACHE["rows"] is None or now - _ROWS_CACHE["t"] > CACHE_TTL:
+        _ROWS_CACHE["rows"] = _fetch_all_uncached(con)
+        _ROWS_CACHE["t"] = now
+    return _ROWS_CACHE["rows"]
+
+
+def _fetch_all_uncached(con) -> list[tuple]:
     return con.execute(
         """SELECT s.slug, sp.name, sp.brand, sp.raw_amount, cp.price, cp.price_per_unit, sp.unit
            FROM store_product sp
@@ -138,7 +159,18 @@ def _fetch_all(con) -> list[tuple]:
 def resolve_staple(con, staple: Staple, rows: list[tuple] | None = None) -> dict | None:
     """Cel mai ieftin produs calificat per magazin, normalizat la cantitatea standard.
     Returneaza None daca nu e disponibil in cel putin 2 magazine.
-    `rows` poate fi refolosit intre apeluri (vezi _fetch_all)."""
+    `rows` poate fi refolosit intre apeluri (vezi _fetch_all). Rezultatul e tinut CACHE_TTL
+    secunde; se intoarce o copie, pentru ca apelantii adauga chei (ex. "staple")."""
+    key = (staple.label, staple.include, staple.exclude, staple.basis_qty, staple.basis_unit)
+    hit = _RESOLVED_CACHE.get(key)
+    if hit and time.time() - hit[0] <= CACHE_TTL:
+        return dict(hit[1]) if hit[1] is not None else None
+    res = _resolve_staple_uncached(con, staple, rows)
+    _RESOLVED_CACHE[key] = (time.time(), res)
+    return dict(res) if res is not None else None
+
+
+def _resolve_staple_uncached(con, staple: Staple, rows: list[tuple] | None = None) -> dict | None:
     if rows is None:
         rows = _fetch_all(con)
     inc = re.compile(staple.include)

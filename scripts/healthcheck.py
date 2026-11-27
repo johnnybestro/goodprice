@@ -12,13 +12,14 @@ Exit != 0 la orice esec => vizibil in journal + systemd status failed.
 import sys
 import urllib.request
 import json
+import os
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from goodprice import db                  # noqa: E402
 from goodprice.matching import _s         # noqa: E402
 
-API = "http://localhost:8000"
+API = os.environ.get("GOODPRICE_API_URL", "http://localhost:8000")
 
 # (termen, fragment care TREBUIE sa apara in numele unui rezultat, magazin asteptat sau None)
 GOLDENS = [
@@ -31,6 +32,13 @@ GOLDENS = [
     ("bere",  "ursus",                      None),
     ("iaurt", "activia",                    None),
 ]
+
+# Staple-uri: pretul standard per magazin trebuie sa fie plauzibil (lei pe cantitatea standard).
+# GOLDEN 2026-11-27: Mega Image "Oua ..., 6 bucati" 9.99 lei aparea 99.90 lei / 10 buc, pentru ca
+# price_per_unit al Mega Image la unit='buc' e pretul pachetului, nu al bucatii.
+STAPLE_RANGES = {
+    "oua": (5.0, 60.0),     # 10 buc
+}
 
 failures: list[str] = []
 
@@ -66,6 +74,28 @@ def check_goldens():
                             + (f" ({store})" if store else "") + f" [{len(prods)} rezultate]")
 
 
+def check_staples():
+    terms = list(STAPLE_RANGES)
+    req = urllib.request.Request(f"{API}/api/resolve", json.dumps({"terms": terms}).encode(),
+                                 {"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r:
+            items = json.load(r)["items"]
+    except Exception as e:
+        failures.append(f"resolve({terms}): {e}")
+        return
+    for it in items:
+        lo, hi = STAPLE_RANGES[it["term"]]
+        chosen = it.get("chosen") or {}
+        if chosen.get("type") != "staple":
+            failures.append(f"STAPLE LIPSA: '{it['term']}' nu mai e rezolvat ca staple")
+            continue
+        for store, price in chosen["prices"].items():
+            if not lo <= price <= hi:
+                failures.append(f"STAPLE PRET ABSURD: '{it['term']}' {store} = {price} lei / "
+                                f"{chosen['basis']} (asteptat {lo}-{hi}): {chosen['picked'].get(store)}")
+
+
 def check_freshness():
     con = db.connect()
     try:
@@ -88,10 +118,11 @@ def check_freshness():
 if __name__ == "__main__":
     check_api()
     check_goldens()
+    check_staples()
     check_freshness()
     if failures:
         print("HEALTHCHECK ESUAT:")
         for f in failures:
             print("  -", f)
         sys.exit(1)
-    print("healthcheck OK — goldens + prospetime + API")
+    print("healthcheck OK — goldens + staple-uri + prospetime + API")
