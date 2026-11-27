@@ -118,6 +118,34 @@ def check_unit_prices():
                                 f"dar unit_price {up} lei/buc")
 
 
+def check_matching_attrs():
+    """GOLDEN 2026-11-27: un grup (canonical_product) nu poate amesteca produse cu procente,
+    coduri de oua sau marimi diferite ("Oua cu Omega 3 cod 2" + "Oua ochioase cod 1",
+    "Lapte 1.5%" + "Lapte 3.5%"). Aceeasi regula ca in matching.attrs_conflict."""
+    from goodprice.matching import attrs_conflict, name_attrs
+    con = db.connect()
+    try:
+        rows = con.execute(
+            """SELECT sp.canonical_product_id, s.slug, sp.name FROM store_product sp
+               JOIN store s ON s.id = sp.store_id WHERE sp.canonical_product_id IS NOT NULL"""
+        ).fetchall()
+    finally:
+        con.close()
+    groups: dict = {}
+    for cid, slug, name in rows:
+        groups.setdefault(cid, []).append((_s(slug), _s(name), name_attrs(_s(name))))
+    bad = 0
+    for cid, members in groups.items():
+        for i, (sa, na, aa) in enumerate(members):
+            for sb, nb, ab in members[i + 1:]:
+                if attrs_conflict(aa, ab):
+                    bad += 1
+                    if bad <= 5:
+                        failures.append(f"MATCHING GRESIT #{cid}: {sa} '{na}' vs {sb} '{nb}'")
+    if bad > 5:
+        failures.append(f"MATCHING GRESIT: inca {bad - 5} perechi")
+
+
 def check_freshness():
     con = db.connect()
     try:
@@ -142,10 +170,11 @@ if __name__ == "__main__":
     check_goldens()
     check_staples()
     check_unit_prices()
+    check_matching_attrs()
     check_freshness()
     if failures:
         print("HEALTHCHECK ESUAT:")
         for f in failures:
             print("  -", f)
         sys.exit(1)
-    print("healthcheck OK — goldens + staple-uri + pret unitar + prospetime + API")
+    print("healthcheck OK — goldens + staple-uri + pret unitar + matching + prospetime + API")
