@@ -85,6 +85,42 @@ def name_tokens(name: str, brand: str | None) -> set[str]:
     return {t for t in toks if len(t) > 1 and t not in STOPWORDS}
 
 
+# Atribute care deosebesc produse altfel identice (acelasi brand, aceeasi cantitate, nume aproape
+# la fel). name_tokens le pierde: tokenii de un caracter sunt aruncati ("cod 1", "marime M") iar
+# "3.5%" devine "3", "5". Daca AMBELE produse au atributul si valorile difera, nu e acelasi
+# produs. GOLDEN 2026-11-27: Mega Image "Oua cu Omega 3 cod 2, 8 bucati" era grupat cu Sezamo
+# "Agricola Oua ochioase cod 1" (8 buc).
+_PCT_RANGE_RE = re.compile(r"(\d+(?:[.,]\d+)?)\s*%?\s*-\s*(\d+(?:[.,]\d+)?)\s*%")   # 33-36%, 3.5%-4.1%
+_ATTR_RES = {
+    "pct": re.compile(r"(\d+(?:[.,]\d+)?)\s*%"),
+    "cod": re.compile(r"\bcod\.?\s*([0-4])\b"),
+    "marime": re.compile(r"\bmarimea?\s+(xxl|xl|m-l|s|m|l)\b"),
+}
+
+
+def name_attrs(name: str) -> dict[str, frozenset]:
+    s = strip_diacritics(name).lower()
+    s = re.sub(r"(\d)\.\s+(\d+\s*%)", r"\1.\2", s)     # "Chefir 3. 3%" (Sezamo) -> 3.3%; nu "de 10, 10%"
+    out = {}
+    for kind, rx in _ATTR_RES.items():
+        vals = set(rx.findall(s))
+        if kind == "pct":
+            for lo, hi in _PCT_RANGE_RE.findall(s):         # un interval = ambele capete
+                vals.update((lo, hi))
+            vals = {f"{float(v.replace(',', '.')):g}" for v in vals}
+        if kind == "marime":
+            vals = {x for v in vals for x in v.split("-")}  # "m-l" = m sau l
+        if vals:
+            out[kind] = frozenset(vals)
+    return out
+
+
+def attrs_conflict(a: dict, b: dict) -> bool:
+    """True daca un atribut apare la ambele produse fara nicio valoare comuna
+    ("1.5%" vs "3.5%", "cod 1" vs "cod 2"). "min. 33%" vs "33-36%" nu e conflict."""
+    return any(kind in b and not (a[kind] & b[kind]) for kind in a)
+
+
 def jaccard(a: set, b: set) -> float:
     if not a or not b:
         return 0.0
@@ -136,7 +172,8 @@ def _load(con, store_slug, require_brand=True):
         amt = amount_in_base(raw) or amount_in_base(name)
         out.append({"id": r[0], "name": name, "brand": brand, "price": r[3],
                     "ppu": r[4], "unit": _s(r[5]) if r[5] else None, "nb": norm_brand(brand),
-                    "toks": name_tokens(name, brand), "amt": amt, "core": produce_core(name)})
+                    "toks": name_tokens(name, brand), "amt": amt, "core": produce_core(name),
+                    "attrs": name_attrs(name)})
     return out
 
 
@@ -152,6 +189,8 @@ def find_matches(a_list, b_list):
         best, best_score = None, 0.0
         for b in b_by_brand.get(a["nb"], ()):
             if not amount_match(a["amt"], b["amt"]):
+                continue
+            if attrs_conflict(a["attrs"], b["attrs"]):
                 continue
             score = jaccard(a["toks"], b["toks"])
             if score > best_score:
@@ -200,6 +239,11 @@ def run(persist=True):
     groups: list[dict] = []            # {"members": {store: prod}, "weighted": bool}
     where: dict[tuple, dict] = {}      # (store, id) -> grup
 
+    def fits(g, p):
+        # un grup se formeaza prin perechi: B~A si C~A nu garanteaza C~B, deci noul membru nu
+        # trebuie sa contrazica pe niciunul dintre cei existenti
+        return not any(attrs_conflict(p["attrs"], m["attrs"]) for m in g["members"].values())
+
     def try_join(a_store, b_store, pairs, weighted):
         added = 0
         for a, b, score in sorted(pairs, key=lambda x: -x[2]):
@@ -208,10 +252,10 @@ def run(persist=True):
             if ga is not None and gb is not None:
                 continue
             if ga is not None:
-                if b_store not in ga["members"]:
+                if b_store not in ga["members"] and fits(ga, b):
                     ga["members"][b_store] = b; where[kb] = ga; added += 1
             elif gb is not None:
-                if a_store not in gb["members"]:
+                if a_store not in gb["members"] and fits(gb, a):
                     gb["members"][a_store] = a; where[ka] = gb; added += 1
             else:
                 g = {"members": {a_store: a, b_store: b}, "weighted": weighted}
@@ -261,6 +305,7 @@ def run(persist=True):
         con.commit()
         print(f"\nPersistat: {n} canonical_product + legaturi.")
     con.close()
+    return groups
 
 
 if __name__ == "__main__":
