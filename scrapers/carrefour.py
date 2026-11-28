@@ -13,22 +13,25 @@ Fiecare PDP contine:
     dimension10 ("available"/...)
 Gramajul e in nume ("1 L", "500g"). Fara GTIN/EAN.
 
-Volum (masurat 2026-11-27): un PDP are ~330 KB si TTFB 1.2-1.9 s, deci secvential
-~0.5 pagini/s => ~2 zile pentru tot sitemap-ul. De aceea:
-  - WORKERS cereri in paralel (implicit 3, fiecare cu pauza+jitter) => ~2 pagini/s,
-    sub cele ~3 req/s pentru care a fost gandit scraperul;
-  - moduri:
-      daily — URL-urile deja cunoscute din categoriile comparabile cu celelalte magazine
-              (DAILY_CATEGORIES) + URL-urile din sitemap pe care nu le-am vazut niciodata
-              (max NEW_PER_DAY). ~40% din sitemap, ~4-5h.
-      full  — tot sitemap-ul (~90k), ~12h (duminica noaptea -> luni dimineata). Reclasifica produsele si prinde schimbarile
-              de categorie.
-      new   — doar URL-urile din sitemap necunoscute (bootstrap / completare).
-      auto  — (implicit, timerul) full duminica sau daca nu avem inca destule produse
-              cunoscute, altfel daily.
+Volum (masurat 2026-11-27/28): un PDP are ~330 KB si TTFB 1.2-1.9 s secvential; cu 3 cereri
+in paralel Carrefour raspunde in 3-5 s, deci ~0.75 pagini/s. Tot sitemap-ul ar dura ~33h si o
+parte din URL-uri sunt produse moarte (200 fara JSON-LD Product). De aceea fiecare rulare e o
+COADA PE PRIORITATI cu BUGET DE TIMP (se opreste curat cand bugetul expira):
+  1. produsele Carrefour care au pereche in alt magazin (canonical_product cu >= 2 magazine)
+     — singurele care conteaza pentru comparatie; mereu primele;
+  2. daily: restul produselor cunoscute din DAILY_CATEGORIES, cele mai vechi (last_seen) primele;
+     full: toate produsele cunoscute, cele mai vechi primele;
+  3. URL-uri din sitemap nevazute niciodata (daily: max NEW_PER_DAY; full: toate).
+Paginile moarte se tin minte DEAD_DAYS zile in $STATE_DIRECTORY/carrefour-dead.json si nu se mai
+cer (full le reverifica dupa expirare). Moduri:
+  daily — buget 7h (21:30 -> ~04:30 UTC, inainte de matching 06:00)
+  full  — buget 14h, duminica (sau cand avem prea putine produse cunoscute)
+  new   — doar URL-uri nevazute (completare), buget CARREFOUR_MAX_HOURS
+  auto  — (timerul) full duminica, altfel daily
 
 Ruleaza:  PYTHONPATH=. python3 scrapers/carrefour.py [auto|daily|full|new] [max_produse]
-Env:      CARREFOUR_WORKERS (implicit 3), CARREFOUR_MODE (implicit auto)
+Env:      CARREFOUR_WORKERS (implicit 3), CARREFOUR_MODE (implicit auto),
+          CARREFOUR_MAX_HOURS (suprascrie bugetul), STATE_DIRECTORY (systemd StateDirectory)
 """
 from __future__ import annotations
 
@@ -57,6 +60,9 @@ WORKERS = max(1, min(int(os.environ.get("CARREFOUR_WORKERS", "3")), 4))
 NEW_PER_DAY = 3000
 FULL_WEEKDAY = 6                 # duminica (ora Romaniei, vezi _local_weekday)
 MIN_KNOWN_FOR_DAILY = 2000       # sub atat, "auto" face full (bootstrap)
+BUDGET_H = {"daily": 7.0, "full": 14.0, "new": 7.0}
+DEAD_DAYS = 30
+STATE_DIR = Path(os.environ.get("STATE_DIRECTORY", "/var/lib/goodprice"))
 
 # Categorii comparabile cu Sezamo/Freshful/Mega Image/Lidl/Kaufland (prefix de category_path).
 # Restul (TEX, electronice, mobila, carti, jucarii, auto...) se reverifica doar saptamanal.
@@ -139,54 +145,103 @@ def parse_pdp(html: str, url: str) -> ScrapedProduct | None:
     )
 
 
-def known_urls(con, store_id: int) -> tuple[set[str], list[str]]:
-    """(toate URL-urile cunoscute, URL-urile cunoscute din DAILY_CATEGORIES)."""
-    rows = con.execute(
-        "SELECT url, category_path FROM store_product WHERE store_id = %s AND url IS NOT NULL",
-        (store_id,)).fetchall()
-    known = {u for u, _ in rows}
-    daily = sorted(u for u, c in rows if c and c.startswith(DAILY_CATEGORIES))
-    return known, daily
-
-
 def _local_weekday() -> int:
     # fara tzdata: Romania e UTC+2 iarna / UTC+3 vara; la 21:30 UTC ziua e aceeasi oricum
     return (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=2)).weekday()
 
 
-def pick_urls(mode: str, client: httpx.Client, con, store_id: int) -> tuple[str, list[str]]:
-    known, daily = known_urls(con, store_id)
+def load_dead() -> dict[str, str]:
+    try:
+        d = json.loads((STATE_DIR / "carrefour-dead.json").read_text())
+    except (OSError, ValueError):
+        return {}
+    cutoff = (datetime.date.today() - datetime.timedelta(days=DEAD_DAYS)).isoformat()
+    return {u: day for u, day in d.items() if day >= cutoff}
+
+
+def save_dead(dead: dict[str, str]) -> None:
+    try:
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        tmp = STATE_DIR / "carrefour-dead.json.tmp"
+        tmp.write_text(json.dumps(dead))
+        tmp.replace(STATE_DIR / "carrefour-dead.json")
+    except OSError as e:
+        print(f"  ! nu pot salva lista de pagini moarte: {e}", flush=True)
+
+
+def pick_urls(mode: str, client: httpx.Client, con, store_id: int,
+              dead: dict[str, str]) -> tuple[str, list[str]]:
+    rows = con.execute(
+        """SELECT sp.url, sp.category_path,
+                  EXISTS (SELECT 1 FROM store_product o
+                          WHERE o.canonical_product_id = sp.canonical_product_id
+                            AND o.store_id <> sp.store_id) AS matched
+           FROM store_product sp
+           WHERE sp.store_id = %s AND sp.url IS NOT NULL
+           ORDER BY sp.last_seen ASC""", (store_id,)).fetchall()
+    con.rollback()
+    known = {u for u, _, _ in rows}
+    comparable = [u for u, c, m in rows if not m and c and c.startswith(DAILY_CATEGORIES)]
     if mode == "auto":
-        mode = "full" if (_local_weekday() == FULL_WEEKDAY or len(daily) < MIN_KNOWN_FOR_DAILY) \
+        mode = "full" if (_local_weekday() == FULL_WEEKDAY or len(comparable) < MIN_KNOWN_FOR_DAILY) \
             else "daily"
     sm = sitemap_urls(client)
-    print(f"URL-uri produs in sitemap: {len(sm)}; cunoscute: {len(known)}; "
-          f"cunoscute in categoriile zilnice: {len(daily)}", flush=True)
-    if mode == "full":
-        return mode, sm
-    new = [u for u in sm if u not in known]
+    in_sm = set(sm)
+    matched = [u for u, _, m in rows if m and u in in_sm]
+    new = [u for u in sm if u not in known and u not in dead]
+    print(f"sitemap: {len(sm)}; cunoscute: {len(known)} (cu pereche: {len(matched)}, "
+          f"comparabile fara pereche: {len(comparable)}); nevazute: {len(new)}; "
+          f"moarte (<{DEAD_DAYS}z): {len(dead)}", flush=True)
     if mode == "new":
         return mode, new
     if mode == "daily":
-        # produsele disparute din sitemap nu se mai cer; cele noi se clasifica azi (plafonat)
-        in_sm = set(sm)
-        return mode, [u for u in daily if u in in_sm] + new[:NEW_PER_DAY]
+        rest = [u for u in comparable if u in in_sm]
+        return mode, matched + rest + new[:NEW_PER_DAY]
+    if mode == "full":
+        mset = set(matched)
+        rest = [u for u, _, _ in rows if u in in_sm and u not in mset]
+        return mode, matched + new + rest
     raise SystemExit(f"mod necunoscut: {mode} (auto|daily|full|new)")
 
 
-def fetch(client: httpx.Client, url: str, stop: threading.Event) -> ScrapedProduct | None:
+_tls = threading.local()
+_clients: list[httpx.Client] = []
+_clients_lock = threading.Lock()
+
+
+def _new_client() -> httpx.Client:
+    return httpx.Client(headers={"User-Agent": UA, "Accept-Language": "ro"},
+                        timeout=httpx.Timeout(30, pool=30), follow_redirects=True)
+
+
+def _thread_client() -> httpx.Client:
+    # un client (si o conexiune) per worker: pool-ul partajat intre thread-uri s-a blocat
+    # in productie (2026-11-28, toti workerii agatati in client.get, zero trafic)
+    c = getattr(_tls, "client", None)
+    if c is None:
+        c = _tls.client = _new_client()
+        with _clients_lock:
+            _clients.append(c)
+    return c
+
+
+def fetch(url: str, stop: threading.Event) -> tuple[str, ScrapedProduct | None]:
+    """('ok', p) | ('dead', None) = pagina exista dar nu e produs / 404 | ('err', None)."""
     if stop.is_set():
-        return None
-    p = None
+        return "skip", None
+    res: tuple[str, ScrapedProduct | None] = ("err", None)
     try:
-        r = client.get(url)
+        r = _thread_client().get(url)
         if r.status_code == 200:
             p = parse_pdp(r.text, url)
+            res = ("ok", p) if p else ("dead", None)
+        elif r.status_code in (404, 410):
+            res = ("dead", None)
     except Exception:
         pass
     # pauza per worker: WORKERS cereri in zbor, fiecare urmata de 0.15-0.25 s
     time.sleep(RATE_LIMIT_S + random.uniform(0, 0.1))
-    return p
+    return res
 
 
 def run(mode: str = "auto", max_products: int | None = None) -> None:
@@ -194,50 +249,66 @@ def run(mode: str = "auto", max_products: int | None = None) -> None:
     store_id = db.get_or_create_store(con, "carrefour", "Carrefour", "online", "RO")
     con.commit()
 
-    written = 0
-    failed = 0
-    degraded = 0
+    written = failed = dead_n = degraded = done = 0
     batch: list[ScrapedProduct] = []
     stop = threading.Event()
     t0 = time.monotonic()
-    limits = httpx.Limits(max_connections=WORKERS, max_keepalive_connections=WORKERS)
-    with httpx.Client(headers={"User-Agent": UA, "Accept-Language": "ro"},
-                      timeout=30, follow_redirects=True, limits=limits) as client:
-        mode, urls = pick_urls(mode, client, con, store_id)
+    dead = load_dead()
+    today = datetime.date.today().isoformat()
+    with _new_client() as client:
+        mode, urls = pick_urls(mode, client, con, store_id, dead)
         if max_products:
             urls = urls[:max_products]
-        print(f"mod={mode} workers={WORKERS}: {len(urls)} pagini de cerut", flush=True)
+        budget_h = float(os.environ.get("CARREFOUR_MAX_HOURS") or BUDGET_H.get(mode, 7.0))
+        deadline = t0 + budget_h * 3600
+        print(f"mod={mode} workers={WORKERS} buget={budget_h}h: {len(urls)} pagini in coada",
+              flush=True)
         with ThreadPoolExecutor(max_workers=WORKERS) as ex:
-            futures = [ex.submit(fetch, client, u, stop) for u in urls]
-            for i, fut in enumerate(as_completed(futures), 1):
-                p = fut.result()
-                if stop.is_set():
+            futures = [ex.submit(fetch, u, stop) for u in urls]
+            for fut, url in zip(futures, urls):     # in ordinea cozii (prioritate)
+                status, p = fut.result()
+                if status == "skip":
                     continue
-                if p:
+                done += 1
+                if status == "ok":
                     degraded = 0
                     batch.append(p)
-                else:
+                    dead.pop(url, None)
+                elif status == "dead":
+                    degraded = 0
+                    dead_n += 1
+                    dead[url] = today
+                else:                               # 403/429/5xx/timeout => posibil blocati
                     failed += 1
                     degraded += 1
                     if degraded >= 40:
-                        print(f"  ! {degraded} esecuri consecutive — probabil blocati; "
+                        print(f"  ! {degraded} erori HTTP consecutive — probabil blocati; "
                               "ma opresc curat", flush=True)
                         stop.set()
-                        ex.shutdown(wait=False, cancel_futures=True)
-                        continue
+                if not stop.is_set() and time.monotonic() > deadline:
+                    print(f"  buget de {budget_h}h epuizat — ma opresc curat", flush=True)
+                    stop.set()
+                if stop.is_set():
+                    ex.shutdown(wait=False, cancel_futures=True)
+                    break
                 if len(batch) >= 100:
                     written += db.write_products(con, store_id, batch)
                     batch = []
-                if i % 500 == 0 or i == len(urls):
-                    rate = i / max(time.monotonic() - t0, 1)
-                    print(f"  [{i}/{len(urls)}] scrise={written + len(batch)} esuate={failed} "
-                          f"({rate:.2f} pagini/s)", flush=True)
+                    save_dead(dead)
+                if done % 500 == 0:
+                    rate = done / max(time.monotonic() - t0, 1)
+                    print(f"  [{done}/{len(urls)}] scrise={written + len(batch)} moarte={dead_n} "
+                          f"erori={failed} ({rate:.2f} pagini/s)", flush=True)
         if batch:
             written += db.write_products(con, store_id, batch)
+        save_dead(dead)
+    for c in _clients:
+        c.close()
 
     con.close()
-    print(f"\nTotal scris in Postgres (carrefour, mod={mode}): {written} "
-          f"in {(time.monotonic() - t0) / 3600:.1f}h", flush=True)
+    print(f"\nTotal scris in Postgres (carrefour, mod={mode}): {written}; moarte={dead_n} "
+          f"erori={failed}; {done}/{len(urls)} pagini in {(time.monotonic() - t0) / 3600:.1f}h",
+          flush=True)
 
 
 if __name__ == "__main__":

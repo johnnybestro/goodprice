@@ -8,4 +8,5 @@ Type=oneshot
 WorkingDirectory=/opt/goodprice
 Environment=PYTHONPATH=/opt/goodprice
 Environment=PYTHONUNBUFFERED=1
+StateDirectory=goodprice
 ExecStart=/opt/goodprice/.venv/bin/python /opt/goodprice/scrapers/carrefour.py
