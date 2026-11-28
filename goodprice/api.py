@@ -317,6 +317,7 @@ def optimize_basket(req: OptRequest):
 
     # SKU-uri dintr-un singur magazin (din configurator): 1 pret, constrang planul
     sp_ids = [i.sp_id for i in req.items if i.sp_id is not None]
+    found_sp: set = set()
     if sp_ids:
         sp_qty = {i.sp_id: i.qty for i in req.items if i.sp_id is not None}
         con3 = db.connect()
@@ -332,11 +333,13 @@ def optimize_basket(req: OptRequest):
         finally:
             con3.close()
         for sid, name, slug, price in rows3:
+            found_sp.add(sid)
             item_list.append({"name": _s(name), "qty": sp_qty.get(sid, 1),
                               "prices": {_s(slug): float(price)}})
 
     # echivalente generice (staple): pretul standard per magazin, calculat pe loc
     staple_items = [i for i in req.items if i.staple]
+    found_staples: set = set()
     if staple_items:
         con2 = db.connect()
         try:
@@ -345,6 +348,7 @@ def optimize_basket(req: OptRequest):
                 st = staples.STAPLES.get(i.staple)
                 generic = staples.resolve_staple(con2, st, all_rows) if st else None
                 if generic:
+                    found_staples.add(i.staple)
                     item_list.append({"name": f"{generic['label']} ({generic['basis']})",
                                       "qty": i.qty, "prices": generic["prices"]})
         finally:
@@ -354,6 +358,16 @@ def optimize_basket(req: OptRequest):
     max_stores = max(1, min(req.max_stores, len(stores)))
     result = optimize.optimize(item_list, stores, max_stores)
     result["store_names"] = store_names()
+    # articolele cerute care nu mai au pret (produs scos din grup, din stoc, staple necunoscut),
+    # in ordinea din cerere; aplicatia le poate semnala utilizatorului in loc sa dispara tacit
+    result["missing"] = [
+        {"canonical_id": i.canonical_id} if i.canonical_id is not None else
+        {"sp_id": i.sp_id} if i.sp_id is not None else {"staple": i.staple}
+        for i in req.items
+        if (i.canonical_id is not None and i.canonical_id not in items)
+        or (i.canonical_id is None and i.sp_id is not None and i.sp_id not in found_sp)
+        or (i.canonical_id is None and i.sp_id is None and i.staple and i.staple not in found_staples)
+    ]
     return result
 
 
