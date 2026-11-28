@@ -38,7 +38,7 @@ Calea `/opt/goodprice` e hardcodată în unit-uri. Deploy ulterior: `git pull` �
 | Verificare zilnică | `scripts/healthcheck.py` (goldens + prospețime + API viu) |
 
 Timere zilnice (UTC): sezamo 04:00 → freshful 04:30 → lidl 05:00 → megaimage 05:30
-→ kaufland 05:45 → matching 06:00 → healthcheck 06:30; carrefour 21:30 (~7h).
+→ kaufland 05:45 → matching 06:00 → healthcheck 06:30; carrefour 21:30: zilnic categoriile comparabile (~4-5h, 3 workeri), duminica tot sitemap-ul (~12h).
 
 ## Capcane învățate (nu le redescoperi)
 

@@ -1,5 +1,5 @@
 [Unit]
-Description=GoodPrice - ruleaza scraper-ul Carrefour zilnic (noaptea, dureaza ~4-5h)
+Description=GoodPrice - Carrefour zilnic (categorii comparabile ~4-5h; duminica tot sitemap-ul ~12h)
 
 [Timer]
 OnCalendar=*-*-* 21:30:00

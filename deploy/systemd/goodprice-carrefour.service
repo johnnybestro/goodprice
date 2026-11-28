@@ -7,4 +7,5 @@ Wants=network-online.target
 Type=oneshot
 WorkingDirectory=/opt/goodprice
 Environment=PYTHONPATH=/opt/goodprice
+Environment=PYTHONUNBUFFERED=1
 ExecStart=/opt/goodprice/.venv/bin/python /opt/goodprice/scrapers/carrefour.py

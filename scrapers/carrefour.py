@@ -5,7 +5,7 @@ Magento + frontend React. Cloudflare pazeste /graphql (403 challenge, legat de
 amprenta TLS), DAR paginile SSR se servesc liber prin HTTP simplu. Categoriile
 alimentare proaspete nu exista in sitemap (partea de "supermarket" cere selectie
 de magazin), asa ca sursa e sitemap-ul de PRODUSE:
-  /pub/sitemap/sitemap_002.xml  (~46k URL-uri /produse/)
+  /pub/sitemap/sitemap_001.xml + sitemap_002.xml  (~90k URL-uri /produse/ la 2026-11-28)
 
 Fiecare PDP contine:
   - JSON-LD Product: name, sku, brand, offers.price (pretul curent de vanzare)
@@ -13,18 +13,34 @@ Fiecare PDP contine:
     dimension10 ("available"/...)
 Gramajul e in nume ("1 L", "500g"). Fara GTIN/EAN.
 
-Atentie la volum: ~46k pagini/zi la ~3 req/s => ~4-5h. Timerul ruleaza noaptea
-(23:45), ca sa termine inainte de matching (06:00).
+Volum (masurat 2026-11-27): un PDP are ~330 KB si TTFB 1.2-1.9 s, deci secvential
+~0.5 pagini/s => ~2 zile pentru tot sitemap-ul. De aceea:
+  - WORKERS cereri in paralel (implicit 3, fiecare cu pauza+jitter) => ~2 pagini/s,
+    sub cele ~3 req/s pentru care a fost gandit scraperul;
+  - moduri:
+      daily — URL-urile deja cunoscute din categoriile comparabile cu celelalte magazine
+              (DAILY_CATEGORIES) + URL-urile din sitemap pe care nu le-am vazut niciodata
+              (max NEW_PER_DAY). ~40% din sitemap, ~4-5h.
+      full  — tot sitemap-ul (~90k), ~12h (duminica noaptea -> luni dimineata). Reclasifica produsele si prinde schimbarile
+              de categorie.
+      new   — doar URL-urile din sitemap necunoscute (bootstrap / completare).
+      auto  — (implicit, timerul) full duminica sau daca nu avem inca destule produse
+              cunoscute, altfel daily.
 
-Ruleaza:  PYTHONPATH=. python3 scrapers/carrefour.py [max_produse]
+Ruleaza:  PYTHONPATH=. python3 scrapers/carrefour.py [auto|daily|full|new] [max_produse]
+Env:      CARREFOUR_WORKERS (implicit 3), CARREFOUR_MODE (implicit auto)
 """
 from __future__ import annotations
 
 import json
 import random
 import re
+import datetime
+import os
 import sys
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import httpx
@@ -37,6 +53,20 @@ BASE = "https://carrefour.ro"
 UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/124.0 Safari/537.36")
 RATE_LIMIT_S = 0.15
+WORKERS = max(1, min(int(os.environ.get("CARREFOUR_WORKERS", "3")), 4))
+NEW_PER_DAY = 3000
+FULL_WEEKDAY = 6                 # duminica (ora Romaniei, vezi _local_weekday)
+MIN_KNOWN_FOR_DAILY = 2000       # sub atat, "auto" face full (bootstrap)
+
+# Categorii comparabile cu Sezamo/Freshful/Mega Image/Lidl/Kaufland (prefix de category_path).
+# Restul (TEX, electronice, mobila, carti, jucarii, auto...) se reverifica doar saptamanal.
+DAILY_CATEGORIES = (
+    "Bacanie & Lichide",
+    "Cosmetice & Ingrijire personala",
+    "Articole bebelusi",
+    "Casa, Gradina & Petshop/Produse de curatenie pentru casa",
+    "Casa, Gradina & Petshop/Petshop",
+)
 
 _LD_RE = re.compile(r'<script type="application/ld\+json">(.*?)</script>', re.S)
 _DETAIL_RE = re.compile(r'"detail":\s*\{.*?"products":\s*(\[.*?\])', re.S)
@@ -109,7 +139,57 @@ def parse_pdp(html: str, url: str) -> ScrapedProduct | None:
     )
 
 
-def run(max_products: int | None = None) -> None:
+def known_urls(con, store_id: int) -> tuple[set[str], list[str]]:
+    """(toate URL-urile cunoscute, URL-urile cunoscute din DAILY_CATEGORIES)."""
+    rows = con.execute(
+        "SELECT url, category_path FROM store_product WHERE store_id = %s AND url IS NOT NULL",
+        (store_id,)).fetchall()
+    known = {u for u, _ in rows}
+    daily = sorted(u for u, c in rows if c and c.startswith(DAILY_CATEGORIES))
+    return known, daily
+
+
+def _local_weekday() -> int:
+    # fara tzdata: Romania e UTC+2 iarna / UTC+3 vara; la 21:30 UTC ziua e aceeasi oricum
+    return (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=2)).weekday()
+
+
+def pick_urls(mode: str, client: httpx.Client, con, store_id: int) -> tuple[str, list[str]]:
+    known, daily = known_urls(con, store_id)
+    if mode == "auto":
+        mode = "full" if (_local_weekday() == FULL_WEEKDAY or len(daily) < MIN_KNOWN_FOR_DAILY) \
+            else "daily"
+    sm = sitemap_urls(client)
+    print(f"URL-uri produs in sitemap: {len(sm)}; cunoscute: {len(known)}; "
+          f"cunoscute in categoriile zilnice: {len(daily)}", flush=True)
+    if mode == "full":
+        return mode, sm
+    new = [u for u in sm if u not in known]
+    if mode == "new":
+        return mode, new
+    if mode == "daily":
+        # produsele disparute din sitemap nu se mai cer; cele noi se clasifica azi (plafonat)
+        in_sm = set(sm)
+        return mode, [u for u in daily if u in in_sm] + new[:NEW_PER_DAY]
+    raise SystemExit(f"mod necunoscut: {mode} (auto|daily|full|new)")
+
+
+def fetch(client: httpx.Client, url: str, stop: threading.Event) -> ScrapedProduct | None:
+    if stop.is_set():
+        return None
+    p = None
+    try:
+        r = client.get(url)
+        if r.status_code == 200:
+            p = parse_pdp(r.text, url)
+    except Exception:
+        pass
+    # pauza per worker: WORKERS cereri in zbor, fiecare urmata de 0.15-0.25 s
+    time.sleep(RATE_LIMIT_S + random.uniform(0, 0.1))
+    return p
+
+
+def run(mode: str = "auto", max_products: int | None = None) -> None:
     con = db.connect()
     store_id = db.get_or_create_store(con, "carrefour", "Carrefour", "online", "RO")
     con.commit()
@@ -118,42 +198,50 @@ def run(max_products: int | None = None) -> None:
     failed = 0
     degraded = 0
     batch: list[ScrapedProduct] = []
+    stop = threading.Event()
+    t0 = time.monotonic()
+    limits = httpx.Limits(max_connections=WORKERS, max_keepalive_connections=WORKERS)
     with httpx.Client(headers={"User-Agent": UA, "Accept-Language": "ro"},
-                      timeout=30, follow_redirects=True) as client:
-        urls = sitemap_urls(client)
+                      timeout=30, follow_redirects=True, limits=limits) as client:
+        mode, urls = pick_urls(mode, client, con, store_id)
         if max_products:
             urls = urls[:max_products]
-        print(f"URL-uri produs in sitemap: {len(urls)}")
-        for i, url in enumerate(urls, 1):
-            p = None
-            try:
-                r = client.get(url)
-                if r.status_code == 200:
-                    p = parse_pdp(r.text, url)
-            except Exception:
-                pass
-            if p:
-                degraded = 0
-                batch.append(p)
-            else:
-                failed += 1
-                degraded += 1
-                if degraded >= 40:
-                    print(f"  ! {degraded} esecuri consecutive — probabil blocati; ma opresc curat")
-                    break
-            if len(batch) >= 100:
-                written += db.write_products(con, store_id, batch)
-                batch = []
-            if i % 500 == 0 or i == len(urls):
-                print(f"  [{i}/{len(urls)}] scrise={written + len(batch)} esuate={failed}")
-            time.sleep(RATE_LIMIT_S + random.uniform(0, 0.1))
+        print(f"mod={mode} workers={WORKERS}: {len(urls)} pagini de cerut", flush=True)
+        with ThreadPoolExecutor(max_workers=WORKERS) as ex:
+            futures = [ex.submit(fetch, client, u, stop) for u in urls]
+            for i, fut in enumerate(as_completed(futures), 1):
+                p = fut.result()
+                if stop.is_set():
+                    continue
+                if p:
+                    degraded = 0
+                    batch.append(p)
+                else:
+                    failed += 1
+                    degraded += 1
+                    if degraded >= 40:
+                        print(f"  ! {degraded} esecuri consecutive — probabil blocati; "
+                              "ma opresc curat", flush=True)
+                        stop.set()
+                        ex.shutdown(wait=False, cancel_futures=True)
+                        continue
+                if len(batch) >= 100:
+                    written += db.write_products(con, store_id, batch)
+                    batch = []
+                if i % 500 == 0 or i == len(urls):
+                    rate = i / max(time.monotonic() - t0, 1)
+                    print(f"  [{i}/{len(urls)}] scrise={written + len(batch)} esuate={failed} "
+                          f"({rate:.2f} pagini/s)", flush=True)
         if batch:
             written += db.write_products(con, store_id, batch)
 
     con.close()
-    print(f"\nTotal scris in Postgres (carrefour): {written}")
+    print(f"\nTotal scris in Postgres (carrefour, mod={mode}): {written} "
+          f"in {(time.monotonic() - t0) / 3600:.1f}h", flush=True)
 
 
 if __name__ == "__main__":
-    n = int(sys.argv[1]) if len(sys.argv) > 1 else None
-    run(n)
+    args = sys.argv[1:]
+    mode = args.pop(0) if args and not args[0].isdigit() else os.environ.get("CARREFOUR_MODE", "auto")
+    n = int(args[0]) if args else None
+    run(mode, n)
